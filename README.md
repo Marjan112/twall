@@ -5,9 +5,24 @@ twall is a simple TUI program for managing wallpapers
 > [!NOTE]
 > twall looks inside /usr/share/backgrounds for wallpapers
 
-## Quick start
+## Dependencies
+
+- glib development files
+- chafa development files
+
+### Debian
 ```sh
-cargo run --release
+apt install libglib2.0-dev libchafa-dev
+```
+
+### Void
+```sh
+xbps-install glib-devel chafa-devel
+```
+
+## Installation
+```sh
+cargo install --path .
 ```
 
 ## License
