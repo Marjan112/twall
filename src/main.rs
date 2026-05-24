@@ -2,7 +2,7 @@
 
 use std::{
     env,
-    io::{self, BufRead, BufReader},
+    io,
     time::{Duration, Instant},
     path::PathBuf, fs,
     process::{Command, Stdio},
@@ -22,6 +22,8 @@ use image::DynamicImage;
 use ratatui_image::{FilterType, Resize, StatefulImage, picker::Picker, protocol::StatefulProtocol};
 use walkdir::WalkDir;
 use ratatui_textarea::TextArea;
+
+// TODO: If an error occurs while trying to set a wallpaper display it in a pop up
 
 #[derive(PartialEq)]
 enum DisplayServer {
@@ -127,14 +129,12 @@ impl App {
 
         let mut wallpaper_list_state = ListState::default().with_selected(Some(0));
 
-        // let mut current_wallpaper_index = None;
         let mut current_wallpaper = None;
 
         if let Ok(wallpaper) = fs::read_to_string(&dot_wallpaper) {
             let wallpaper = PathBuf::from(&wallpaper);
             if let Some(index) = wallpapers.iter().position(|w| w == &wallpaper) {
                 wallpaper_list_state = wallpaper_list_state.with_selected(Some(index));
-                // current_wallpaper_index = Some(index);
                 current_wallpaper = Some(wallpaper);
             }
         }
@@ -153,7 +153,6 @@ impl App {
             message: String::new(),
             mode: Mode::Normal,
             search_input,
-            // current_wallpaper_index,
             current_wallpaper,
             path_tx,
             image_rx,
@@ -197,27 +196,27 @@ impl App {
                     Command::new("xwallpaper")
                         .args(["--stretch", new_wall])
                         .stderr(Stdio::piped())
-                        .spawn(),
+                        .output(),
                 DisplayServer::Wayland =>
-                    Command::new("swaybg")
-                        .args(["-i", new_wall, "-m", "stretch"])
+                    Command::new("swaymsg")
+                        .args(["output", "*", "bg", new_wall, "stretch"])
                         .stderr(Stdio::piped())
-                        .spawn(),
+                        .output(),
                 DisplayServer::Unknown => unreachable!()
             };
 
             match command {
-                Ok(mut child) => {
-                    if let Some(stderr) = child.stderr.take() && let Some(Ok(err_msg)) = BufReader::new(stderr).lines().next() {
-                        self.message = format!("Failed to set {new_wall} as a wallpaper: {err_msg}");
-                    } else {
+                Ok(output) => {
+                    if output.status.success() {
                         fs::write(&self.dot_wallpaper, new_wall)?;
                         self.message = format!("Set {} as a wallpaper", new_wall);
-                        // self.current_wallpaper_index = Some(index);
                         self.current_wallpaper = Some(new_wall.into());
+                    } else {
+                        let err_msg = String::from_utf8_lossy(&output.stderr);
+                        self.message = format!("Failed to set {new_wall} as a wallpaper: {err_msg}");
                     }
                 }
-                Err(err) => self.message = format!("Failed to set {} as a wallpaper: {}", new_wall, err)
+                Err(err) => self.message = format!("Failed to set {new_wall} as a wallpaper: {err}")
             }
         }
 
@@ -243,9 +242,16 @@ impl App {
                             self.indicator = None;
                             self.apply_filter();
                         }
-                        KeyCode::Char('j') | KeyCode::Down => self.wallpaper_list_state.select_next(),
-                        KeyCode::Char('k') | KeyCode::Up => self.wallpaper_list_state.select_previous(),
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            self.indicator = None;
+                            self.wallpaper_list_state.select_next();
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            self.indicator = None;
+                            self.wallpaper_list_state.select_previous();
+                        }
                         KeyCode::Char('G') => {
+                            self.indicator = None;
                             self.wallpaper_list_state.select_last();
                             self.shift_g_pressed = true;
                         }
@@ -264,6 +270,7 @@ impl App {
                             self.indicator = None;
                         }
                         KeyCode::Char('c') => {
+                            self.indicator = None;
                             if let Some(current_wallpaper) = &self.current_wallpaper {
                                 if let Some(index) = self.filtered_wallpapers.iter().position(|w| w == current_wallpaper) {
                                     if self.search_input.is_empty() {
@@ -279,6 +286,7 @@ impl App {
                         KeyCode::Char('/') => {
                             self.wallpaper_list_state.select(None);
                             self.message.clear();
+                            self.indicator = None;
                             self.mode = Mode::Search;
                         }
                         KeyCode::Enter => self.set_wallpaper()?,
@@ -370,7 +378,7 @@ impl App {
     fn draw_status_bar(&mut self, frame: &mut Frame, status_bar_area: Rect) {
         match self.mode {
             Mode::Normal => {
-                let bar_layout = Layout::horizontal([Constraint::Percentage(80), Constraint::Percentage(20)]).split(status_bar_area);
+                let bar_layout = Layout::horizontal([Constraint::Percentage(90), Constraint::Percentage(10)]).split(status_bar_area);
                 frame.render_widget(Line::from(self.message.as_str()).left_aligned(), bar_layout[0]);
                 if let Some(c) = self.indicator {
                     frame.render_widget(Line::from(c.to_string()).left_aligned(), bar_layout[1]);
