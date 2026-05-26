@@ -5,8 +5,11 @@ twall is a simple TUI program for managing wallpapers
 > [!NOTE]
 > twall looks inside /usr/share/backgrounds for wallpapers
 
+# Installation from source
+
 ## Dependencies
 
+- rust
 - glib development files
 - chafa development files
 - xwallpaper *on X11*
@@ -15,7 +18,8 @@ twall is a simple TUI program for managing wallpapers
 ### Debian
 
 ```sh
-sudo apt install libglib2.0-dev libchafa-dev
+sudo apt install rustup libglib2.0-dev libchafa-dev
+rustup default stable
 ```
 
 #### If on X11
@@ -27,7 +31,8 @@ sudo apt install xwallpaper
 ### Void
 
 ```sh
-sudo xbps-install glib-devel chafa-devel
+sudo xbps-install rustup glib-devel chafa-devel
+rustup-init
 ```
 
 #### If on X11
