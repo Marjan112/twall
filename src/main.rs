@@ -276,8 +276,7 @@ impl App {
                                     if self.search_input.is_empty() {
                                         self.wallpaper_list_state.select(Some(index));
                                     }
-                                    let current_wallpaper = self.wallpapers[index].display();
-                                    self.message = format!("Current wallpaper is {current_wallpaper}");
+                                    self.message = format!("Current wallpaper is {}", current_wallpaper.display());
                                 }
                             } else {
                                 self.message = String::from("No wallpaper is set");
@@ -343,7 +342,7 @@ impl App {
             .iter()
             .map(|p| {
                 let filename = p.file_name().unwrap().display().to_string();
-                if let Some(current_wallpaper) = &self.current_wallpaper && let Some(index) = self.filtered_wallpapers.iter().position(|w| w == current_wallpaper) && p == &self.filtered_wallpapers[index] {
+                if let Some(current_wallpaper) = &self.current_wallpaper && self.filtered_wallpapers.contains(current_wallpaper) && p == current_wallpaper {
                     ListItem::new(format!("{filename} *")).style(Style::default().bg(Color::LightBlue).fg(Color::Black))
                 } else {
                     ListItem::new(filename)
