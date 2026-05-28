@@ -7,6 +7,7 @@ use std::{
     path::PathBuf, fs,
     process::{Command, Stdio},
     thread, sync::{Arc, mpsc::{self, SyncSender, Receiver}},
+    rc::Rc,
     collections::HashMap
 };
 use ratatui::{
@@ -22,8 +23,6 @@ use image::DynamicImage;
 use ratatui_image::{FilterType, Resize, StatefulImage, picker::Picker, protocol::StatefulProtocol};
 use walkdir::WalkDir;
 use ratatui_textarea::TextArea;
-
-// TODO: If an error occurs while trying to set a wallpaper display it in a pop up
 
 #[derive(PartialEq)]
 enum DisplayServer {
@@ -52,6 +51,63 @@ fn detect_display_server() -> DisplayServer {
     DisplayServer::Unknown
 }
 
+fn spawn_image_decoder(picker: Arc<Picker>, image_tx: SyncSender<StatefulProtocol>, path_rx: Receiver<PathBuf>) {
+    thread::spawn(move || {
+        let mut cache: HashMap<PathBuf, Rc<DynamicImage>> = HashMap::new();
+
+        while let Ok(path) = path_rx.recv() {
+            let preview = {
+                if let Some(cached_image) = cache.get(&path) {
+                    cached_image.clone()
+                } else {
+                    match image::ImageReader::open(&path).and_then(|r| r.decode().map_err(io::Error::other)) {
+                        Ok(image) => {
+                            let thumbnail = Rc::new(image.thumbnail(800, 600));
+                            cache.insert(path.clone(), thumbnail.clone());
+                            thumbnail
+                        }
+                        Err(_) => continue
+                    }
+                }
+            };
+
+            let _ = image_tx.send(picker.new_resize_protocol((*preview).clone()));
+        }
+    });
+}
+
+fn collect_wallpapers() -> Vec<PathBuf> {
+    let exts = ["jpg", "jpeg", "png", "gif", "webp"];
+    let mut wallpapers = Vec::new();
+
+    for entry in WalkDir::new("/usr/share/backgrounds/")
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.into_path();
+
+        if path.is_file() && let Some(ext) = path.extension().and_then(|os_str| os_str.to_str()) && exts.contains(&ext.to_lowercase().as_str()) {
+            wallpapers.push(path);
+        }
+    }
+
+    wallpapers.sort_unstable();
+    wallpapers
+}
+
+fn load_current_wallpaper(dot_wallpaper: &PathBuf, wallpapers: &Vec<PathBuf>, wallpaper_list_state: &mut ListState, path_tx: &SyncSender<PathBuf>) -> Option<PathBuf> {
+    if let Ok(string) = fs::read_to_string(&dot_wallpaper) {
+        let wallpaper = PathBuf::from(string);
+        if let Some(index) = wallpapers.iter().position(|w| w == &wallpaper) {
+            *wallpaper_list_state = wallpaper_list_state.with_selected(Some(index));
+            let _ = path_tx.try_send(wallpaper.clone());
+            return Some(wallpaper);
+        }
+    }
+
+    None
+}
+
 enum Mode {
     Normal,
     Search
@@ -72,7 +128,8 @@ struct App {
     image_rx: Receiver<StatefulProtocol>,
     preview_update_timer: Instant,
     shift_g_pressed: bool,
-    display_server: DisplayServer
+    display_server: DisplayServer,
+    last_previewed: Option<PathBuf>
 }
 
 impl App {
@@ -82,68 +139,25 @@ impl App {
             return Err(io::Error::other("Unknown display server"));
         }
 
-        let picker = Picker::from_query_stdio().map_err(io::Error::other)?;
-        let image_state = picker.new_resize_protocol(DynamicImage::default());
-
         let (path_tx, path_rx) = mpsc::sync_channel::<PathBuf>(1);
         let (image_tx, image_rx) = mpsc::sync_channel::<StatefulProtocol>(1);
 
-        thread::spawn(move || {
-            let mut cache: HashMap<PathBuf, Arc<DynamicImage>> = HashMap::new();
+        let picker = Picker::from_query_stdio().map_err(io::Error::other)?;
+        let image_state = picker.new_resize_protocol(DynamicImage::default());
 
-            while let Ok(path) = path_rx.recv() {
-                let preview = {
-                    if let Some(cached_image) = cache.get(&path) {
-                        cached_image.clone()
-                    } else {
-                        match image::ImageReader::open(&path).and_then(|r| r.decode().map_err(io::Error::other)) {
-                            Ok(image) => {
-                                let thumbnail = Arc::new(image.thumbnail(800, 600));
-                                cache.insert(path.clone(), thumbnail.clone());
-                                thumbnail
-                            }
-                            Err(_) => continue
-                        }
-                    }
-                };
+        spawn_image_decoder(Arc::new(picker), image_tx, path_rx);
 
-                let _ = image_tx.send(picker.new_resize_protocol((*preview).clone()));
-            }
-        });
-
-        let exts = ["jpg", "jpeg", "png", "gif", "webp"];
-        let mut wallpapers = Vec::new();
-
-        for entry in WalkDir::new("/usr/share/backgrounds/")
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.into_path();
-
-            if path.is_file() && let Some(ext) = path.extension().and_then(|os_str| os_str.to_str()) && exts.contains(&ext.to_lowercase().as_str()) {
-                wallpapers.push(path);
-            }
-        }
-
-        let dot_wallpaper = PathBuf::from(format!("{}/.wallpaper", env::home_dir().unwrap().display()));
-
+        let wallpapers = collect_wallpapers();
         let mut wallpaper_list_state = ListState::default().with_selected(Some(0));
 
-        let mut current_wallpaper = None;
-
-        if let Ok(wallpaper) = fs::read_to_string(&dot_wallpaper) {
-            let wallpaper = PathBuf::from(&wallpaper);
-            if let Some(index) = wallpapers.iter().position(|w| w == &wallpaper) {
-                wallpaper_list_state = wallpaper_list_state.with_selected(Some(index));
-                current_wallpaper = Some(wallpaper);
-            }
-        }
+        let dot_wallpaper = PathBuf::from(format!("{}/.wallpaper", env::home_dir().unwrap().display()));
+        let current_wallpaper = load_current_wallpaper(&dot_wallpaper, &wallpapers, &mut wallpaper_list_state, &path_tx);
 
         let mut search_input = TextArea::default();
         search_input.set_cursor_line_style(Style::default().white());
         search_input.set_placeholder_text("Search wallpaper...");
 
-        let mut app = Self {
+        Ok(Self {
             wallpaper_list_state,
             wallpapers: wallpapers.clone(),
             filtered_wallpapers: wallpapers,
@@ -158,23 +172,29 @@ impl App {
             image_rx,
             preview_update_timer: Instant::now(),
             shift_g_pressed: false,
-            display_server
-        };
-
-        app.update_selected_image(false);
-        Ok(app)
+            display_server,
+            last_previewed: None
+        })
     }
 
     fn update_selected_image(&mut self, last: bool) {
-        if last && let Some(path) = self.filtered_wallpapers.last() {
-            let _ = self.path_tx.try_send(path.clone());
-        } else if let Some(index) = self.wallpaper_list_state.selected() && let Some(path) = self.filtered_wallpapers.get(index) {
-            let _ = self.path_tx.try_send(path.clone());
+        let path = if last {
+            self.filtered_wallpapers.last().cloned()
+        } else {
+            self.wallpaper_list_state.selected().and_then(|i| self.filtered_wallpapers.get(i).cloned())
+        };
+
+        if let Some(path) = path {
+            if self.last_previewed.as_ref() != Some(&path) {
+                if self.path_tx.try_send(path.clone()).is_ok() {
+                    self.last_previewed = Some(path);
+                }
+            }
         }
     }
 
     fn apply_filter(&mut self) {
-        let query = self.search_input.lines()[0].to_lowercase();
+        let query = self.search_input.lines()[0].trim().to_lowercase();
 
         self.filtered_wallpapers = self.wallpapers
             .iter()
@@ -186,6 +206,8 @@ impl App {
                 .contains(&query))
             .cloned()
             .collect();
+
+        self.last_previewed = None;
     }
 
     fn set_wallpaper(&mut self) -> io::Result<()> {
@@ -224,14 +246,21 @@ impl App {
     }
 
     fn run(&mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
+        let mut need_redraw = true;
+
         loop {
             if let Ok(new_state) = self.image_rx.try_recv() {
                 self.image_state = new_state;
+                need_redraw = true;
             }
 
-            terminal.draw(|frame| self.draw_ui(frame))?;
+            if need_redraw {
+                terminal.draw(|frame| self.draw_ui(frame))?;
+                need_redraw = false;
+            }
 
-            if event::poll(Duration::from_millis(70))? && let Some(key) = event::read()?.as_key_press_event() {
+            if event::poll(Duration::from_millis(100))? && let Some(key) = event::read()?.as_key_press_event() {
+                need_redraw = true;
                 match self.mode {
                     Mode::Normal => match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => {
@@ -304,8 +333,8 @@ impl App {
                         }
                     }
                 }
-            }
-
+            }    
+            
             if self.preview_update_timer.elapsed() >= Duration::from_millis(100) {
                 self.preview_update_timer = Instant::now();
                 self.update_selected_image(self.shift_g_pressed);
