@@ -273,7 +273,7 @@ impl App {
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
                             self.indicator = None;
-                            if let Some(index) = self.wallpaper_list_state.selected() && index != self.filtered_wallpapers.len() - 1 {
+                            if self.wallpaper_list_state.selected().map_or(true, |index| index != self.filtered_wallpapers.len() - 1) {
                                 self.wallpaper_list_state.select_next();
                             }
                         }
@@ -283,7 +283,7 @@ impl App {
                         }
                         KeyCode::Char('G') => {
                             self.indicator = None;
-                            if let Some(index) = self.wallpaper_list_state.selected() && index != self.filtered_wallpapers.len() - 1 {
+                            if self.wallpaper_list_state.selected().map_or(true, |index| index != self.filtered_wallpapers.len() - 1) {
                                 self.wallpaper_list_state.select_last();
                             }
                             self.shift_g_pressed = true;
