@@ -95,7 +95,7 @@ fn collect_wallpapers() -> Vec<PathBuf> {
     wallpapers
 }
 
-fn load_current_wallpaper(dot_wallpaper: &PathBuf, wallpapers: &Vec<PathBuf>, wallpaper_list_state: &mut ListState, path_tx: &SyncSender<PathBuf>) -> Option<PathBuf> {
+fn load_current_wallpaper(dot_wallpaper: &PathBuf, wallpapers: &[PathBuf], wallpaper_list_state: &mut ListState, path_tx: &SyncSender<PathBuf>) -> Option<PathBuf> {
     if let Ok(string) = fs::read_to_string(&dot_wallpaper) {
         let wallpaper = PathBuf::from(string);
         if let Some(index) = wallpapers.iter().position(|w| w == &wallpaper) {
@@ -273,7 +273,9 @@ impl App {
                         }
                         KeyCode::Char('j') | KeyCode::Down => {
                             self.indicator = None;
-                            self.wallpaper_list_state.select_next();
+                            if let Some(index) = self.wallpaper_list_state.selected() && index != self.filtered_wallpapers.len() - 1 {
+                                self.wallpaper_list_state.select_next();
+                            }
                         }
                         KeyCode::Char('k') | KeyCode::Up => {
                             self.indicator = None;
@@ -281,7 +283,9 @@ impl App {
                         }
                         KeyCode::Char('G') => {
                             self.indicator = None;
-                            self.wallpaper_list_state.select_last();
+                            if let Some(index) = self.wallpaper_list_state.selected() && index != self.filtered_wallpapers.len() - 1 {
+                                self.wallpaper_list_state.select_last();
+                            }
                             self.shift_g_pressed = true;
                         }
                         KeyCode::Char('g') => {
