@@ -11,7 +11,7 @@ use std::{
     collections::HashMap
 };
 use ratatui::{
-    crossterm::event::{self, KeyCode},
+    crossterm::event::{self, KeyCode, Event},
     Frame,
     layout::{Layout, Constraint, HorizontalAlignment, Rect},
     widgets::{List, ListState, ListItem, Block},
@@ -259,85 +259,91 @@ impl App {
                 need_redraw = false;
             }
 
-            if event::poll(Duration::from_millis(100))? && let Some(key) = event::read()?.as_key_press_event() {
-                need_redraw = true;
-                match self.mode {
-                    Mode::Normal => match key.code {
-                        KeyCode::Esc | KeyCode::Char('q') => {
-                            if self.search_input.is_empty() && self.indicator.is_none() {
-                                break;
-                            }
-                            self.search_input.clear();
-                            self.indicator = None;
-                            self.apply_filter();
-                        }
-                        KeyCode::Char('j') | KeyCode::Down => {
-                            self.indicator = None;
-                            if self.wallpaper_list_state.selected().map_or(true, |index| index != self.filtered_wallpapers.len() - 1) {
-                                self.wallpaper_list_state.select_next();
-                            }
-                        }
-                        KeyCode::Char('k') | KeyCode::Up => {
-                            self.indicator = None;
-                            self.wallpaper_list_state.select_previous();
-                        }
-                        KeyCode::Char('G') => {
-                            self.indicator = None;
-                            if self.wallpaper_list_state.selected().map_or(true, |index| index != self.filtered_wallpapers.len() - 1) {
-                                self.wallpaper_list_state.select_last();
-                            }
-                            self.shift_g_pressed = true;
-                        }
-                        KeyCode::Char('g') => {
-                            if let Some('g') = self.indicator {
-                                self.wallpaper_list_state.select_first();
-                                self.indicator = None;
-                            } else {
-                                self.indicator = Some('g');
-                            }
-                        }
-                        KeyCode::Char('o') => {
-                            if let Some('g') = self.indicator {
-                                self.wallpaper_list_state.select_first();
-                            }
-                            self.indicator = None;
-                        }
-                        KeyCode::Char('c') => {
-                            self.indicator = None;
-                            if let Some(current_wallpaper) = &self.current_wallpaper {
-                                if let Some(index) = self.filtered_wallpapers.iter().position(|w| w == current_wallpaper) {
-                                    if self.search_input.is_empty() {
-                                        self.wallpaper_list_state.select(Some(index));
+            if event::poll(Duration::from_millis(100))? {
+                match event::read()? {
+                    Event::Resize(_, _) => need_redraw = true,
+                    Event::Key(key) => {
+                        need_redraw = true;
+                        match self.mode {
+                            Mode::Normal => match key.code {
+                                KeyCode::Esc | KeyCode::Char('q') => {
+                                    if self.search_input.is_empty() && self.indicator.is_none() {
+                                        break;
                                     }
-                                    self.message = format!("Current wallpaper is {}", current_wallpaper.display());
+                                    self.search_input.clear();
+                                    self.indicator = None;
+                                    self.apply_filter();
                                 }
-                            } else {
-                                self.message = String::from("No wallpaper is set");
+                                KeyCode::Char('j') | KeyCode::Down => {
+                                    self.indicator = None;
+                                    if self.wallpaper_list_state.selected().map_or(true, |index| index != self.filtered_wallpapers.len() - 1) {
+                                        self.wallpaper_list_state.select_next();
+                                    }
+                                }
+                                KeyCode::Char('k') | KeyCode::Up => {
+                                    self.indicator = None;
+                                    self.wallpaper_list_state.select_previous();
+                                }
+                                KeyCode::Char('G') => {
+                                    self.indicator = None;
+                                    if self.wallpaper_list_state.selected().map_or(true, |index| index != self.filtered_wallpapers.len() - 1) {
+                                        self.wallpaper_list_state.select_last();
+                                    }
+                                    self.shift_g_pressed = true;
+                                }
+                                KeyCode::Char('g') => {
+                                    if let Some('g') = self.indicator {
+                                        self.wallpaper_list_state.select_first();
+                                        self.indicator = None;
+                                    } else {
+                                        self.indicator = Some('g');
+                                    }
+                                }
+                                KeyCode::Char('o') => {
+                                    if let Some('g') = self.indicator {
+                                        self.wallpaper_list_state.select_first();
+                                    }
+                                    self.indicator = None;
+                                }
+                                KeyCode::Char('c') => {
+                                    self.indicator = None;
+                                    if let Some(current_wallpaper) = &self.current_wallpaper {
+                                        if let Some(index) = self.filtered_wallpapers.iter().position(|w| w == current_wallpaper) {
+                                            if self.search_input.is_empty() {
+                                                self.wallpaper_list_state.select(Some(index));
+                                            }
+                                            self.message = format!("Current wallpaper is {}", current_wallpaper.display());
+                                        }
+                                    } else {
+                                        self.message = String::from("No wallpaper is set");
+                                    }
+                                }
+                                KeyCode::Char('/') => {
+                                    self.wallpaper_list_state.select(None);
+                                    self.message.clear();
+                                    self.indicator = None;
+                                    self.mode = Mode::Search;
+                                }
+                                KeyCode::Enter => self.set_wallpaper()?,
+                                _ => self.indicator = None,
+                            }
+                            Mode::Search => match key.code {
+                                KeyCode::Esc => {
+                                    self.mode = Mode::Normal;
+                                    self.search_input.clear();
+                                    self.apply_filter();
+                                }
+                                KeyCode::Enter => self.mode = Mode::Normal,
+                                _ => {
+                                    self.search_input.input(key);
+                                    self.apply_filter();
+                                }
                             }
                         }
-                        KeyCode::Char('/') => {
-                            self.wallpaper_list_state.select(None);
-                            self.message.clear();
-                            self.indicator = None;
-                            self.mode = Mode::Search;
-                        }
-                        KeyCode::Enter => self.set_wallpaper()?,
-                        _ => self.indicator = None,
                     }
-                    Mode::Search => match key.code {
-                        KeyCode::Esc => {
-                            self.mode = Mode::Normal;
-                            self.search_input.clear();
-                            self.apply_filter();
-                        }
-                        KeyCode::Enter => self.mode = Mode::Normal,
-                        _ => {
-                            self.search_input.input(key);
-                            self.apply_filter();
-                        }
-                    }
-                }
-            }    
+                    _ => {}
+                }    
+            }
             
             if self.preview_update_timer.elapsed() >= Duration::from_millis(100) {
                 self.preview_update_timer = Instant::now();
