@@ -95,8 +95,8 @@ fn collect_wallpapers() -> Vec<PathBuf> {
     wallpapers
 }
 
-fn load_current_wallpaper(dot_wallpaper: &PathBuf, wallpapers: &[PathBuf], wallpaper_list_state: &mut ListState, path_tx: &SyncSender<PathBuf>) -> Option<PathBuf> {
-    if let Ok(string) = fs::read_to_string(&dot_wallpaper) {
+fn load_current_wallpaper(config: &PathBuf, wallpapers: &[PathBuf], wallpaper_list_state: &mut ListState, path_tx: &SyncSender<PathBuf>) -> Option<PathBuf> {
+    if let Ok(string) = fs::read_to_string(&config) {
         let wallpaper = PathBuf::from(string);
         if let Some(index) = wallpapers.iter().position(|w| w == &wallpaper) {
             *wallpaper_list_state = wallpaper_list_state.with_selected(Some(index));
@@ -118,7 +118,7 @@ struct App {
     wallpapers: Vec<PathBuf>,
     filtered_wallpapers: Vec<PathBuf>,
     image_state: StatefulProtocol,
-    dot_wallpaper: PathBuf, // ~/.wallpaper file where we store the path of the current wallpaper
+    config: PathBuf,
     indicator: Option<char>,
     message: String,
     mode: Mode,
@@ -150,8 +150,8 @@ impl App {
         let wallpapers = collect_wallpapers();
         let mut wallpaper_list_state = ListState::default().with_selected(Some(0));
 
-        let dot_wallpaper = PathBuf::from(format!("{}/.wallpaper", env::home_dir().unwrap().display()));
-        let current_wallpaper = load_current_wallpaper(&dot_wallpaper, &wallpapers, &mut wallpaper_list_state, &path_tx);
+        let config = PathBuf::from(format!("{}/.twall", env::home_dir().unwrap().display()));
+        let current_wallpaper = load_current_wallpaper(&config, &wallpapers, &mut wallpaper_list_state, &path_tx);
 
         let mut search_input = TextArea::default();
         search_input.set_cursor_line_style(Style::default().white());
@@ -162,7 +162,7 @@ impl App {
             wallpapers: wallpapers.clone(),
             filtered_wallpapers: wallpapers,
             image_state,
-            dot_wallpaper,
+            config,
             indicator: None,
             message: String::new(),
             mode: Mode::Normal,
@@ -230,7 +230,7 @@ impl App {
             match command {
                 Ok(output) => {
                     if output.status.success() {
-                        fs::write(&self.dot_wallpaper, new_wall)?;
+                        fs::write(&self.config, new_wall)?;
                         self.message = format!("Set {} as a wallpaper", new_wall);
                         self.current_wallpaper = Some(new_wall.into());
                     } else {
