@@ -96,7 +96,7 @@ fn collect_wallpapers() -> Vec<PathBuf> {
 }
 
 fn load_current_wallpaper(config: &PathBuf, wallpapers: &[PathBuf], wallpaper_list_state: &mut ListState, path_tx: &SyncSender<PathBuf>) -> Option<PathBuf> {
-    if let Ok(string) = fs::read_to_string(&config) {
+    if let Ok(string) = fs::read_to_string(config) {
         let wallpaper = PathBuf::from(string);
         if let Some(index) = wallpapers.iter().position(|w| w == &wallpaper) {
             *wallpaper_list_state = wallpaper_list_state.with_selected(Some(index));
@@ -276,7 +276,7 @@ impl App {
                                 }
                                 KeyCode::Char('j') | KeyCode::Down => {
                                     self.indicator = None;
-                                    if self.wallpaper_list_state.selected().map_or(true, |index| index != self.filtered_wallpapers.len() - 1) {
+                                    if self.wallpaper_list_state.selected().is_none_or(|index| index != self.filtered_wallpapers.len().saturating_sub(1)) {
                                         self.wallpaper_list_state.select_next();
                                     }
                                 }
@@ -286,7 +286,7 @@ impl App {
                                 }
                                 KeyCode::Char('G') => {
                                     self.indicator = None;
-                                    if self.wallpaper_list_state.selected().map_or(true, |index| index != self.filtered_wallpapers.len() - 1) {
+                                    if self.wallpaper_list_state.selected().is_none_or(|index| index != self.filtered_wallpapers.len().saturating_sub(1)) {
                                         self.wallpaper_list_state.select_last();
                                     }
                                     self.shift_g_pressed = true;
@@ -342,9 +342,9 @@ impl App {
                         }
                     }
                     _ => {}
-                }    
+                }
             }
-            
+
             if self.preview_update_timer.elapsed() >= Duration::from_millis(100) {
                 self.preview_update_timer = Instant::now();
                 self.update_selected_image(self.shift_g_pressed);
@@ -410,7 +410,7 @@ impl App {
         let inner_area = preview_block.inner(preview_area).centered(Constraint::Percentage(50), Constraint::Percentage(50));
 
         frame.render_widget(preview_block, preview_area);
-        frame.render_stateful_widget(StatefulImage::new().resize(Resize::Scale(Some(FilterType::Lanczos3))), inner_area, &mut self.image_state);
+        frame.render_stateful_widget(StatefulImage::new().resize(Resize::Scale(Some(FilterType::Nearest))), inner_area, &mut self.image_state);
     }
 
     fn draw_status_bar(&mut self, frame: &mut Frame, status_bar_area: Rect) {
