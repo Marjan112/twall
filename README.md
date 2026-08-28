@@ -3,7 +3,7 @@
 twall is a simple TUI program for managing wallpapers
 
 > [!NOTE]
-> twall looks inside /usr/share/backgrounds for wallpapers
+> twall looks inside /usr/share/backgrounds and ~/.local/share/backgrounds for wallpapers
 
 # Installation from source
 
