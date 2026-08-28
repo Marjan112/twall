@@ -76,22 +76,30 @@ fn spawn_image_decoder(picker: Arc<Picker>, image_tx: SyncSender<StatefulProtoco
     });
 }
 
-fn collect_wallpapers() -> Vec<PathBuf> {
+fn get_wallpapers_from(path: PathBuf) -> Vec<PathBuf> {
     let exts = ["jpg", "jpeg", "png", "gif", "webp"];
-    let mut wallpapers = Vec::new();
-
-    for entry in WalkDir::new("/usr/share/backgrounds/")
+    WalkDir::new(path) 
         .into_iter()
         .filter_map(|e| e.ok())
-    {
-        let path = entry.into_path();
+        .map(|e| e.into_path())
+        .filter(|path| {
+            path.is_file() && path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| exts.contains(&ext.to_lowercase().as_str()))
+        })
+        .collect()
+}
 
-        if path.is_file() && let Some(ext) = path.extension().and_then(|os_str| os_str.to_str()) && exts.contains(&ext.to_lowercase().as_str()) {
-            wallpapers.push(path);
-        }
-    }
+fn collect_wallpapers() -> Vec<PathBuf> {
+    let mut wallpapers = Vec::new();
 
+    let home = std::env::home_dir().unwrap();
+
+    wallpapers.extend(get_wallpapers_from("/usr/share/backgrounds".into()));
+    wallpapers.extend(get_wallpapers_from(home.join(".local/share/backgrounds")));
     wallpapers.sort_unstable();
+
     wallpapers
 }
 
@@ -148,6 +156,7 @@ impl App {
         spawn_image_decoder(Arc::new(picker), image_tx, path_rx);
 
         let wallpapers = collect_wallpapers();
+
         let mut wallpaper_list_state = ListState::default().with_selected(Some(0));
 
         let config = PathBuf::from(format!("{}/.twall", env::home_dir().unwrap().display()));
