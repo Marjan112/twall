@@ -4,10 +4,9 @@ use std::{
     env,
     io,
     time::{Duration, Instant},
-    path::PathBuf, fs,
+    path::{Path, PathBuf}, fs,
     process::{Command, Stdio},
     thread, sync::{Arc, mpsc::{self, SyncSender, Receiver}},
-    rc::Rc,
     collections::HashMap
 };
 use ratatui::{
@@ -53,7 +52,7 @@ fn detect_display_server() -> DisplayServer {
 
 fn spawn_image_decoder(picker: Arc<Picker>, image_tx: SyncSender<StatefulProtocol>, path_rx: Receiver<PathBuf>) {
     thread::spawn(move || {
-        let mut cache: HashMap<PathBuf, Rc<DynamicImage>> = HashMap::new();
+        let mut cache: HashMap<PathBuf, DynamicImage> = HashMap::new();
 
         while let Ok(path) = path_rx.recv() {
             let preview = {
@@ -62,7 +61,7 @@ fn spawn_image_decoder(picker: Arc<Picker>, image_tx: SyncSender<StatefulProtoco
                 } else {
                     match image::ImageReader::open(&path).and_then(|r| r.decode().map_err(io::Error::other)) {
                         Ok(image) => {
-                            let thumbnail = Rc::new(image.thumbnail(800, 600));
+                            let thumbnail = image.thumbnail(800, 600);
                             cache.insert(path.clone(), thumbnail.clone());
                             thumbnail
                         }
@@ -71,12 +70,12 @@ fn spawn_image_decoder(picker: Arc<Picker>, image_tx: SyncSender<StatefulProtoco
                 }
             };
 
-            let _ = image_tx.send(picker.new_resize_protocol((*preview).clone()));
+            let _ = image_tx.send(picker.new_resize_protocol(preview));
         }
     });
 }
 
-fn get_wallpapers_from(path: PathBuf) -> Vec<PathBuf> {
+fn get_wallpapers_from(path: &Path) -> Vec<PathBuf> {
     let exts = ["jpg", "jpeg", "png", "gif", "webp"];
     WalkDir::new(path) 
         .into_iter()
@@ -91,13 +90,11 @@ fn get_wallpapers_from(path: PathBuf) -> Vec<PathBuf> {
         .collect()
 }
 
-fn collect_wallpapers() -> Vec<PathBuf> {
+fn collect_wallpapers(local_backgrounds: &Path) -> Vec<PathBuf> {
     let mut wallpapers = Vec::new();
 
-    let home = std::env::home_dir().unwrap();
-
-    wallpapers.extend(get_wallpapers_from("/usr/share/backgrounds".into()));
-    wallpapers.extend(get_wallpapers_from(home.join(".local/share/backgrounds")));
+    wallpapers.extend(get_wallpapers_from(Path::new("/usr/share/backgrounds")));
+    wallpapers.extend(get_wallpapers_from(local_backgrounds));
     wallpapers.sort_unstable();
 
     wallpapers
@@ -118,7 +115,8 @@ fn load_current_wallpaper(config: &PathBuf, wallpapers: &[PathBuf], wallpaper_li
 
 enum Mode {
     Normal,
-    Search
+    Search,
+    Add
 }
 
 struct App {
@@ -127,17 +125,18 @@ struct App {
     filtered_wallpapers: Vec<PathBuf>,
     image_state: StatefulProtocol,
     config: PathBuf,
-    indicator: Option<char>,
     message: String,
     mode: Mode,
     search_input: TextArea<'static>,
+    wallpaper_path_input: TextArea<'static>,
     current_wallpaper: Option<PathBuf>,
     path_tx: SyncSender<PathBuf>,
     image_rx: Receiver<StatefulProtocol>,
     preview_update_timer: Instant,
     shift_g_pressed: bool,
     display_server: DisplayServer,
-    last_previewed: Option<PathBuf>
+    last_previewed: Option<PathBuf>,
+    local_backgrounds_path: PathBuf
 }
 
 impl App {
@@ -155,7 +154,10 @@ impl App {
 
         spawn_image_decoder(Arc::new(picker), image_tx, path_rx);
 
-        let wallpapers = collect_wallpapers();
+        let home = std::env::home_dir().unwrap();
+        let local_backgrounds_path = home.join(".local/share/backgrounds");
+
+        let wallpapers = collect_wallpapers(&local_backgrounds_path);
 
         let mut wallpaper_list_state = ListState::default().with_selected(Some(0));
 
@@ -166,23 +168,28 @@ impl App {
         search_input.set_cursor_line_style(Style::default().white());
         search_input.set_placeholder_text("Search wallpaper...");
 
+        let mut wallpaper_path_input = TextArea::default();
+        wallpaper_path_input.set_cursor_line_style(Style::default().white());
+        wallpaper_path_input.set_placeholder_text("New wallpaper path...");
+
         Ok(Self {
             wallpaper_list_state,
             wallpapers: wallpapers.clone(),
             filtered_wallpapers: wallpapers,
             image_state,
             config,
-            indicator: None,
             message: String::new(),
             mode: Mode::Normal,
             search_input,
+            wallpaper_path_input,
             current_wallpaper,
             path_tx,
             image_rx,
             preview_update_timer: Instant::now(),
             shift_g_pressed: false,
             display_server,
-            last_previewed: None
+            last_previewed: None,
+            local_backgrounds_path
         })
     }
 
@@ -276,46 +283,28 @@ impl App {
                         match self.mode {
                             Mode::Normal => match key.code {
                                 KeyCode::Esc | KeyCode::Char('q') => {
-                                    if self.search_input.is_empty() && self.indicator.is_none() {
+                                    if self.search_input.is_empty() {
                                         break;
                                     }
                                     self.search_input.clear();
-                                    self.indicator = None;
                                     self.apply_filter();
                                 }
                                 KeyCode::Char('j') | KeyCode::Down => {
-                                    self.indicator = None;
                                     if self.wallpaper_list_state.selected().is_none_or(|index| index != self.filtered_wallpapers.len().saturating_sub(1)) {
                                         self.wallpaper_list_state.select_next();
                                     }
                                 }
                                 KeyCode::Char('k') | KeyCode::Up => {
-                                    self.indicator = None;
                                     self.wallpaper_list_state.select_previous();
                                 }
                                 KeyCode::Char('G') => {
-                                    self.indicator = None;
                                     if self.wallpaper_list_state.selected().is_none_or(|index| index != self.filtered_wallpapers.len().saturating_sub(1)) {
                                         self.wallpaper_list_state.select_last();
                                     }
                                     self.shift_g_pressed = true;
                                 }
-                                KeyCode::Char('g') => {
-                                    if let Some('g') = self.indicator {
-                                        self.wallpaper_list_state.select_first();
-                                        self.indicator = None;
-                                    } else {
-                                        self.indicator = Some('g');
-                                    }
-                                }
-                                KeyCode::Char('o') => {
-                                    if let Some('g') = self.indicator {
-                                        self.wallpaper_list_state.select_first();
-                                    }
-                                    self.indicator = None;
-                                }
+                                KeyCode::Char('g') => self.wallpaper_list_state.select_first(),
                                 KeyCode::Char('c') => {
-                                    self.indicator = None;
                                     if let Some(current_wallpaper) = &self.current_wallpaper {
                                         if let Some(index) = self.filtered_wallpapers.iter().position(|w| w == current_wallpaper) {
                                             if self.search_input.is_empty() {
@@ -327,14 +316,14 @@ impl App {
                                         self.message = String::from("No wallpaper is set");
                                     }
                                 }
+                                KeyCode::Char('a') => self.mode = Mode::Add,
                                 KeyCode::Char('/') => {
                                     self.wallpaper_list_state.select(None);
                                     self.message.clear();
-                                    self.indicator = None;
                                     self.mode = Mode::Search;
-                                }
+                                },
                                 KeyCode::Enter => self.set_wallpaper()?,
-                                _ => self.indicator = None,
+                                _ => {},
                             }
                             Mode::Search => match key.code {
                                 KeyCode::Esc => {
@@ -346,6 +335,35 @@ impl App {
                                 _ => {
                                     self.search_input.input(key);
                                     self.apply_filter();
+                                }
+                            }
+                            Mode::Add => match key.code {
+                                KeyCode::Esc => {
+                                    self.mode = Mode::Normal;
+                                    self.wallpaper_path_input.clear();
+                                }
+                                KeyCode::Enter => {
+                                    let wallpaper_path = Path::new(self.wallpaper_path_input.lines()[0].as_str());
+                                    if let Some(wallpaper_name) = wallpaper_path.file_name() {
+                                        let wallpaper_dest = self.local_backgrounds_path.join(wallpaper_name);
+                                        if !self.wallpapers.contains(&wallpaper_dest) {
+                                            match fs::copy(wallpaper_path, &wallpaper_dest) {
+                                                Ok(_) => {
+                                                    self.wallpapers.push(wallpaper_dest);
+                                                    self.apply_filter();
+                                                    self.wallpaper_list_state.select_last();
+                                                }
+                                                Err(err) => self.message = format!("Failed to add {}: {}", wallpaper_name.display(), err)
+                                            }
+                                        } else {
+                                            self.message = format!("Wallpaper {} already exists", wallpaper_dest.display());
+                                        }
+                                    }
+                                    self.mode = Mode::Normal;
+                                    self.wallpaper_path_input.clear();
+                                }
+                                _ => {
+                                    self.wallpaper_path_input.input(key);
                                 }
                             }
                         }
@@ -424,14 +442,9 @@ impl App {
 
     fn draw_status_bar(&mut self, frame: &mut Frame, status_bar_area: Rect) {
         match self.mode {
-            Mode::Normal => {
-                let bar_layout = Layout::horizontal([Constraint::Percentage(90), Constraint::Percentage(10)]).split(status_bar_area);
-                frame.render_widget(Line::from(self.message.as_str()).left_aligned(), bar_layout[0]);
-                if let Some(c) = self.indicator {
-                    frame.render_widget(Line::from(c.to_string()).left_aligned(), bar_layout[1]);
-                }
-            }
-            Mode::Search => frame.render_widget(&self.search_input, status_bar_area)
+            Mode::Normal => frame.render_widget(Line::from(self.message.as_str()).left_aligned(), status_bar_area),
+            Mode::Search => frame.render_widget(&self.search_input, status_bar_area),
+            Mode::Add => frame.render_widget(&self.wallpaper_path_input, status_bar_area)
         }
     }
 }
