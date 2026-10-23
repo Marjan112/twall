@@ -10,7 +10,7 @@ twall is a simple TUI program for managing wallpapers
 - xwallpaper *on X11*
 - on Wayland, only sway compositor is supported (for now)
 
-# Quick start
+## Quick start
 
 ```sh
 cargo run --release
