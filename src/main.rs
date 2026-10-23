@@ -275,7 +275,7 @@ impl App {
                 need_redraw = false;
             }
 
-            if event::poll(Duration::from_millis(100))? {
+            if event::poll(Duration::from_millis(16))? {
                 match event::read()? {
                     Event::Resize(_, _) => need_redraw = true,
                     Event::Key(key) => {
