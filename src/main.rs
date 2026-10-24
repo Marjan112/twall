@@ -136,7 +136,8 @@ struct App {
     shift_g_pressed: bool,
     display_server: DisplayServer,
     last_previewed: Option<PathBuf>,
-    local_backgrounds_path: PathBuf
+    local_backgrounds_path: PathBuf,
+    need_redraw: bool
 }
 
 impl App {
@@ -189,7 +190,8 @@ impl App {
             shift_g_pressed: false,
             display_server,
             last_previewed: None,
-            local_backgrounds_path
+            local_backgrounds_path,
+            need_redraw: true
         })
     }
 
@@ -223,12 +225,15 @@ impl App {
             .cloned()
             .collect();
 
+        self.filtered_wallpapers.sort_unstable();
+
         self.last_previewed = None;
     }
 
     fn set_wallpaper(&mut self) -> io::Result<()> {
         if let Some(index) = self.wallpaper_list_state.selected() {
             let new_wall = &self.filtered_wallpapers[index].display().to_string();
+
             let command = match self.display_server {
                 DisplayServer::X11 =>
                     Command::new("xwallpaper")
@@ -261,25 +266,71 @@ impl App {
         Ok(())
     }
 
-    fn run(&mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
-        let mut need_redraw = true;
+    fn delete_wallpaper(&mut self) {
+        if let Some(i) = self.wallpaper_list_state.selected() {
+            let selected_wall = self.filtered_wallpapers[i].clone();
+            match fs::remove_file(&selected_wall) {
+                Ok(_) => {
+                    if let Some(j) = self.wallpapers.iter().position(|w| *w == selected_wall) {
+                        self.wallpapers.swap_remove(j);
+                    }
 
+                    if let Some(current_wallpaper_path) = &self.current_wallpaper && *current_wallpaper_path == selected_wall {
+                        let command = match self.display_server {
+                            DisplayServer::X11 =>
+                                Command::new("xwallpaper")
+                                    .args(["--clear"])
+                                    .stderr(Stdio::piped())
+                                    .output(),
+                            DisplayServer::Wayland =>
+                                Command::new("swaymsg")
+                                    .args(["output", "*", "bg", "solid_color", "fill", "#000000"])
+                                    .stderr(Stdio::piped())
+                                    .output(),
+                            DisplayServer::Unknown => unreachable!()
+                        };
+
+                        match command {
+                            Ok(output) => {
+                                if output.status.success() {
+                                    let _ = fs::write(&self.config, "");
+                                    self.current_wallpaper = None;    
+                                } else {
+                                    let err_msg = String::from_utf8_lossy(&output.stderr);
+                                    self.message = format!("Failed to clear the background: {err_msg}");
+                                }
+                            }
+                            Err(err) => self.message = format!("Failed to clear the background: {err}")
+                        }
+                    }
+                    
+                    self.apply_filter();
+
+                    self.message = format!("Deleted {}", selected_wall.display());
+                    self.need_redraw = true;
+                },
+                Err(err) => self.message = format!("Failed to delete {}: {}", selected_wall.display(), err)
+            }
+        }
+    }
+
+    fn run(&mut self, mut terminal: DefaultTerminal) -> io::Result<()> {
         loop {
             if let Ok(new_state) = self.image_rx.try_recv() {
                 self.image_state = new_state;
-                need_redraw = true;
+                self.need_redraw = true;
             }
 
-            if need_redraw {
+            if self.need_redraw {
                 terminal.draw(|frame| self.draw_ui(frame))?;
-                need_redraw = false;
+                self.need_redraw = false;
             }
 
             if event::poll(Duration::from_millis(16))? {
                 match event::read()? {
-                    Event::Resize(_, _) => need_redraw = true,
+                    Event::Resize(_, _) => self.need_redraw = true,
                     Event::Key(key) => {
-                        need_redraw = true;
+                        self.need_redraw = true;
                         match self.mode {
                             Mode::Normal => match key.code {
                                 KeyCode::Esc | KeyCode::Char('q') => {
@@ -323,6 +374,7 @@ impl App {
                                     self.mode = Mode::Search;
                                 },
                                 KeyCode::Enter => self.set_wallpaper()?,
+                                KeyCode::Char('d') => self.delete_wallpaper(),
                                 _ => {},
                             }
                             Mode::Search => match key.code {
@@ -351,6 +403,7 @@ impl App {
                                                 Ok(_) => {
                                                     self.wallpapers.push(wallpaper_dest);
                                                     self.apply_filter();
+                                                    self.need_redraw = true;
                                                     self.wallpaper_list_state.select_last();
                                                 }
                                                 Err(err) => self.message = format!("Failed to add {}: {}", wallpaper_name.display(), err)
