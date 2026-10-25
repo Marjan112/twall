@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf}, fs,
     process::{Command, Stdio},
     thread, sync::{Arc, mpsc::{self, SyncSender, Receiver}},
-    collections::HashMap
+    num::NonZeroUsize
 };
 use ratatui::{
     crossterm::event::{self, KeyCode, Event},
@@ -22,6 +22,7 @@ use image::DynamicImage;
 use ratatui_image::{FilterType, Resize, StatefulImage, picker::Picker, protocol::StatefulProtocol};
 use walkdir::WalkDir;
 use ratatui_textarea::TextArea;
+use lru::LruCache;
 
 #[derive(PartialEq)]
 enum DisplayServer {
@@ -52,7 +53,7 @@ fn detect_display_server() -> DisplayServer {
 
 fn spawn_image_decoder(picker: Arc<Picker>, image_tx: SyncSender<StatefulProtocol>, path_rx: Receiver<PathBuf>) {
     thread::spawn(move || {
-        let mut cache: HashMap<PathBuf, DynamicImage> = HashMap::new();
+        let mut cache: LruCache<PathBuf, DynamicImage> = LruCache::new(NonZeroUsize::new(50).unwrap());
 
         while let Ok(path) = path_rx.recv() {
             let preview = {
@@ -62,7 +63,7 @@ fn spawn_image_decoder(picker: Arc<Picker>, image_tx: SyncSender<StatefulProtoco
                     match image::ImageReader::open(&path).and_then(|r| r.decode().map_err(io::Error::other)) {
                         Ok(image) => {
                             let thumbnail = image.thumbnail(800, 600);
-                            cache.insert(path.clone(), thumbnail.clone());
+                            cache.put(path.clone(), thumbnail.clone());
                             thumbnail
                         }
                         Err(_) => continue
@@ -452,7 +453,7 @@ impl App {
         let mut block = Block::bordered().title_alignment(HorizontalAlignment::Center);
  
         if let Some(index) = self.wallpaper_list_state.selected() {
-            block = block.title(format!(" Wallpaper ({}/{}) ", index + 1, self.filtered_wallpapers.len()));
+            block = block.title(format!(" Wallpaper ({}/{}) ", index.wrapping_add(1), self.filtered_wallpapers.len()));
         } else {
             block = block.title(format!(" Wallpapers ({}) ", self.filtered_wallpapers.len()));
         }
