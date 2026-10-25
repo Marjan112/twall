@@ -24,7 +24,6 @@ use walkdir::WalkDir;
 use ratatui_textarea::TextArea;
 use lru::LruCache;
 
-#[derive(PartialEq)]
 enum DisplayServer {
     X11,
     Wayland,
@@ -144,7 +143,7 @@ struct App {
 impl App {
     fn new() -> io::Result<Self> {
         let display_server = detect_display_server();
-        if display_server == DisplayServer::Unknown {
+        if matches!(display_server, DisplayServer::Unknown) {
             return Err(io::Error::other("Unknown display server"));
         }
 
