@@ -368,6 +368,13 @@ impl App {
                                     }
                                 }
                                 KeyCode::Char('a') => self.mode = Mode::Add,
+                                KeyCode::Char('p') => {
+                                    self.message = if let Some(index) = self.wallpaper_list_state.selected() {
+                                        format!("Full path: {}", self.filtered_wallpapers[index].display())
+                                    } else {
+                                        String::from("No wallpaper selected")
+                                    };
+                                }
                                 KeyCode::Char('/') => {
                                     self.wallpaper_list_state.select(None);
                                     self.message.clear();
